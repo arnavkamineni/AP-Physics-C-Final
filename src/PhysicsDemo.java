@@ -129,6 +129,9 @@ public class PhysicsDemo extends JFrame {
         // Trail: list of (x,y) in meters
         final List<double[]> trail = new ArrayList<>(4000);
 
+        // Camera: world-space center (meters) that maps to the screen center
+        double camX = 0, camY = 0;
+
         // --- Controls ---
         JSlider   sliderAngle;
         JSlider   sliderSpeed;
@@ -149,16 +152,8 @@ public class PhysicsDemo extends JFrame {
             setBackground(BG_COLOR);
 
             canvas = new ProjectileCanvas();
-
-            // Wrap canvas in a scroll pane (for very long ranges)
-            JScrollPane scroll = new JScrollPane(canvas);
-            scroll.setBackground(BG_COLOR);
-            scroll.getViewport().setBackground(BG_COLOR);
-            scroll.setBorder(BorderFactory.createLineBorder(AXIS_COLOR, 1));
-            scroll.setHorizontalScrollBarPolicy(JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED);
-            scroll.setVerticalScrollBarPolicy(JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED);
-
-            add(scroll, BorderLayout.CENTER);
+            canvas.setBorder(BorderFactory.createLineBorder(AXIS_COLOR, 1));
+            add(canvas, BorderLayout.CENTER);
             add(buildControls(), BorderLayout.EAST);
 
             // Timer: ~62 fps
@@ -341,6 +336,13 @@ public class PhysicsDemo extends JFrame {
             landed    = false;
             trail.clear();
             trail.add(new double[]{posX, posY});
+
+            // Place camera so the launch origin sits in the lower-left of the view
+            int cw = (canvas != null && canvas.getWidth()  > 0) ? canvas.getWidth()  : 900;
+            int ch = (canvas != null && canvas.getHeight() > 0) ? canvas.getHeight() : 600;
+            camX = -(cw / 2.0 - 80)  / PIXELS_PER_METER;  // origin 80 px from left
+            camY =  (ch / 2.0 - 70)  / PIXELS_PER_METER;  // origin 70 px from bottom
+
             if (canvas != null) canvas.repaint();
         }
 
@@ -378,6 +380,14 @@ public class PhysicsDemo extends JFrame {
                 animTimer.stop();
             }
 
+            // Smooth camera follow — lerp toward ball, keeping it centered
+            int cw = canvas.getWidth()  > 0 ? canvas.getWidth()  : 900;
+            int ch = canvas.getHeight() > 0 ? canvas.getHeight() : 600;
+            double targetCamX = posX - (cw / 2.0 - 80) / PIXELS_PER_METER;
+            double targetCamY = posY + (ch / 2.0 - 70) / PIXELS_PER_METER;
+            camX += (targetCamX - camX) * 0.08;
+            camY += (targetCamY - camY) * 0.08;
+
             canvas.repaint();
         }
 
@@ -385,7 +395,6 @@ public class PhysicsDemo extends JFrame {
         class ProjectileCanvas extends JPanel {
 
             ProjectileCanvas() {
-                setPreferredSize(new Dimension(CANVAS_W, CANVAS_H));
                 setBackground(BG_COLOR);
             }
 
@@ -399,9 +408,9 @@ public class PhysicsDemo extends JFrame {
                 int w = getWidth();
                 int h = getHeight();
 
-                // Coordinate transform: origin at bottom-left with 20 px margin
-                int originX = 40;
-                int originY = h - 40;
+                // Camera-driven origin: screen center shows world point (camX, camY)
+                int originX = w / 2 - (int)(camX * PIXELS_PER_METER);
+                int originY = h / 2 + (int)(camY * PIXELS_PER_METER);
 
                 drawGrid(g2, w, h, originX, originY);
                 drawAxes(g2, w, h, originX, originY);
@@ -424,52 +433,82 @@ public class PhysicsDemo extends JFrame {
             void drawGrid(Graphics2D g2, int w, int h, int originX, int originY) {
                 g2.setColor(GRID_COLOR);
                 g2.setStroke(new BasicStroke(0.5f));
-                int gridSpacingPx = (int)(10 * PIXELS_PER_METER); // every 10 m
-                // vertical lines
-                for (int px = originX; px < w; px += gridSpacingPx) {
+                int gridM  = 10; // meters per grid line
+                int gridPx = (int)(gridM * PIXELS_PER_METER);
+                if (gridPx < 1) return;
+
+                // Vertical lines: span the full visible width
+                int firstGridX = originX % gridPx;
+                if (firstGridX > 0) firstGridX -= gridPx;
+                for (int px = firstGridX; px < w; px += gridPx) {
                     g2.drawLine(px, 0, px, h);
                 }
-                // horizontal lines
-                for (int py = originY; py > 0; py -= gridSpacingPx) {
-                    g2.drawLine(0, py, w, py);
+                // Horizontal lines: only above ground (y >= 0 in world)
+                int groundPy = originY; // pixel row of y=0
+                int firstGridY = groundPy % gridPx;
+                if (firstGridY > 0) firstGridY -= gridPx;
+                for (int py = firstGridY; py < groundPy; py += gridPx) {
+                    if (py >= 0 && py < h) g2.drawLine(0, py, w, py);
                 }
             }
 
             void drawAxes(Graphics2D g2, int w, int h, int originX, int originY) {
                 g2.setColor(AXIS_COLOR);
                 g2.setStroke(new BasicStroke(1.5f));
-                // X axis (ground)
-                g2.drawLine(originX, originY, w - 10, originY);
-                // Y axis
-                g2.drawLine(originX, originY, originX, 10);
 
-                // Tick labels
+                // Ground line (y=0) — draw across full width if on screen
+                if (originY >= 0 && originY <= h) {
+                    g2.drawLine(0, originY, w, originY);
+                    drawArrow(g2, w - 18, originY, w - 10, originY);
+                    g2.setFont(new Font("SansSerif", Font.BOLD, 11));
+                    g2.setColor(ACCENT_CYAN);
+                    g2.drawString("x (m)", w - 44, originY - 6);
+                }
+
+                // Y axis (x=0) — draw full height if on screen
+                if (originX >= 0 && originX <= w) {
+                    g2.setColor(AXIS_COLOR);
+                    g2.setStroke(new BasicStroke(1.5f));
+                    g2.drawLine(originX, 0, originX, h);
+                    drawArrow(g2, originX, 18, originX, 10);
+                    g2.setFont(new Font("SansSerif", Font.BOLD, 11));
+                    g2.setColor(ACCENT_CYAN);
+                    g2.drawString("y (m)", originX + 6, 22);
+                }
+
+                // Tick labels along the ground
                 g2.setFont(new Font("Monospaced", Font.PLAIN, 10));
                 g2.setColor(new Color(0x77, 0x77, 0xaa));
-                int gridSpacingPx = (int)(50 * PIXELS_PER_METER); // label every 50 m
-                int mPerLabel = 50;
-                for (int m = 0; m * PIXELS_PER_METER + originX < w - 10; m += mPerLabel) {
+                int labelStep = 50; // every 50 m
+                // Compute first visible world x multiple of labelStep
+                double leftWorldX  = (0 - originX) / PIXELS_PER_METER;
+                double rightWorldX = (w - originX) / PIXELS_PER_METER;
+                int firstLabelX = (int)(Math.floor(leftWorldX / labelStep)) * labelStep;
+                for (int m = firstLabelX; m <= (int)rightWorldX + labelStep; m += labelStep) {
+                    if (m < 0) continue;
                     int px = toPixX(m, originX);
-                    g2.drawLine(px, originY, px, originY + 4);
-                    g2.drawString(m + "m", px - 10, originY + 14);
+                    if (px < 0 || px > w) continue;
+                    int tickY = Math.min(Math.max(originY, 0), h - 15);
+                    g2.setColor(AXIS_COLOR);
+                    if (originY >= 0 && originY <= h) g2.drawLine(px, originY, px, originY + 4);
+                    g2.setColor(new Color(0x77, 0x77, 0xaa));
+                    g2.drawString(m + "m", px - 10, tickY + 14);
                 }
-                for (int m = 0; originY - m * PIXELS_PER_METER > 10; m += mPerLabel) {
+
+                // Tick labels along the Y axis
+                double bottomWorldY = -(originY - h) / PIXELS_PER_METER;
+                double topWorldY    = originY / PIXELS_PER_METER;
+                int firstLabelY = (int)(Math.floor(bottomWorldY / labelStep)) * labelStep;
+                for (int m = firstLabelY; m <= (int)topWorldY + labelStep; m += labelStep) {
+                    if (m < 0) continue;
                     int py = toPixY(m, originY);
-                    g2.drawLine(originX - 4, py, originX, py);
-                    g2.drawString(m + "m", 2, py + 4);
+                    if (py < 0 || py > h) continue;
+                    int tickX = Math.min(Math.max(originX, 0), w - 35);
+                    g2.setColor(AXIS_COLOR);
+                    if (originX >= 0 && originX <= w) g2.drawLine(originX - 4, py, originX, py);
+                    g2.setColor(new Color(0x77, 0x77, 0xaa));
+                    g2.drawString(m + "m", tickX - 34, py + 4);
                 }
-
-                // Arrow heads
-                g2.setColor(AXIS_COLOR);
-                g2.setStroke(new BasicStroke(1.5f));
-                drawArrow(g2, w - 18, originY, w - 10, originY);
-                drawArrow(g2, originX, 18, originX, 10);
-
-                // Axis labels
-                g2.setFont(new Font("SansSerif", Font.BOLD, 11));
-                g2.setColor(ACCENT_CYAN);
-                g2.drawString("x (m)", w - 40, originY - 8);
-                g2.drawString("y (m)", originX + 6, 22);
             }
 
             void drawArrow(Graphics2D g2, int x1, int y1, int x2, int y2) {
