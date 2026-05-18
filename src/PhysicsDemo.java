@@ -130,11 +130,15 @@ public class PhysicsDemo extends JFrame {
         final List<double[]> trail = new ArrayList<>(4000);
 
         // --- Controls ---
-        JSlider sliderAngle;
-        JSlider sliderSpeed;
-        JSlider sliderGravity;
-        JLabel  lblAngle, lblSpeed, lblGravity;
-        JButton btnLaunch, btnReset;
+        JSlider   sliderAngle;
+        JSlider   sliderSpeed;
+        JSlider   sliderGravity;
+        JLabel    lblAngle, lblSpeed, lblGravity;
+        JButton   btnLaunch, btnReset;
+        JCheckBox chkAirResist;
+        JSlider   sliderDrag;
+        JLabel    lblDrag;
+        double    dragCoef = 0.0;
 
         // --- Canvas ---
         ProjectileCanvas canvas;
@@ -235,7 +239,46 @@ public class PhysicsDemo extends JFrame {
             gravPanel.add(lblGravity,    BorderLayout.EAST);
             gravPanel.setAlignmentX(Component.LEFT_ALIGNMENT);
             panel.add(gravPanel);
-            panel.add(Box.createVerticalStrut(20));
+            panel.add(Box.createVerticalStrut(8));
+
+            // --- Air Resistance ---
+            JPanel dragOuterPanel = new JPanel(new BorderLayout(4, 2));
+            dragOuterPanel.setBackground(CONTROL_BG);
+            dragOuterPanel.setBorder(makeTitledBorder("Air Resistance"));
+            dragOuterPanel.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+            chkAirResist = new JCheckBox("Enable Drag");
+            chkAirResist.setBackground(CONTROL_BG);
+            chkAirResist.setForeground(ACCENT_CYAN);
+            chkAirResist.setFont(LABEL_FONT);
+
+            sliderDrag = makeSlider(1, 100, 25);
+            sliderDrag.setEnabled(false);
+
+            lblDrag = new JLabel("k=0.0025");
+            lblDrag.setForeground(ACCENT_YELLOW);
+            lblDrag.setFont(HUD_BOLD);
+            lblDrag.setHorizontalAlignment(SwingConstants.RIGHT);
+
+            chkAirResist.addActionListener(e -> {
+                sliderDrag.setEnabled(chkAirResist.isSelected());
+                if (!launched) resetState();
+                canvas.repaint();
+            });
+            sliderDrag.addChangeListener(e -> {
+                lblDrag.setText(String.format("k=%.4f", sliderDrag.getValue() * 0.0001));
+                if (!launched) resetState();
+            });
+
+            JPanel dragSliderRow = new JPanel(new BorderLayout());
+            dragSliderRow.setBackground(CONTROL_BG);
+            dragSliderRow.add(sliderDrag, BorderLayout.CENTER);
+            dragSliderRow.add(lblDrag,    BorderLayout.EAST);
+
+            dragOuterPanel.add(chkAirResist,  BorderLayout.NORTH);
+            dragOuterPanel.add(dragSliderRow, BorderLayout.CENTER);
+            panel.add(dragOuterPanel);
+            panel.add(Box.createVerticalStrut(14));
 
             // --- Buttons ---
             btnLaunch = makeButton("Launch", ACCENT_CYAN);
@@ -267,7 +310,8 @@ public class PhysicsDemo extends JFrame {
             JTextArea info = new JTextArea(
                 "Physics:\n" +
                 "  x(t) = v₀cosθ·t\n" +
-                "  y(t) = v₀sinθ·t - ½gt²\n\n" +
+                "  y(t) = v₀sinθ·t - ½gt²\n" +
+                "  Drag: a=-k·|v|·v\n\n" +
                 "Integration:\n  Euler  dt=0.016 s\n\n" +
                 "Scale:\n  1 px = 0.5 m");
             info.setEditable(false);
@@ -306,11 +350,15 @@ public class PhysicsDemo extends JFrame {
                 animTimer.stop();
                 return;
             }
-            gravity = sliderGravity.getValue();
+            gravity  = sliderGravity.getValue();
+            dragCoef = (chkAirResist != null && chkAirResist.isSelected())
+                       ? sliderDrag.getValue() * 0.0001
+                       : 0.0;
 
-            // Euler integration
-            double ax = 0;
-            double ay = -gravity;
+            // Euler integration — quadratic drag opposing velocity
+            double speed = Math.hypot(velX, velY);
+            double ax = (speed > 0) ? -dragCoef * speed * velX : 0.0;
+            double ay = -gravity + ((speed > 0) ? -dragCoef * speed * velY : 0.0);
 
             velX += ax * DT;
             velY += ay * DT;
@@ -486,15 +534,38 @@ public class PhysicsDemo extends JFrame {
                 g2.setStroke(new BasicStroke(1.5f));
                 g2.drawOval(px - 8, py - 8, 16, 16);
 
-                // Velocity vector (if still flying)
-                if (launched && !landed) {
+                // Velocity vector — shown before launch and during flight
+                if (!landed) {
                     double scale = 0.4;
                     int vx2 = px + (int)(velX * scale * PIXELS_PER_METER);
                     int vy2 = py - (int)(velY * scale * PIXELS_PER_METER);
-                    g2.setColor(new Color(0xFF, 0x99, 0x00, 200));
-                    g2.setStroke(new BasicStroke(1.5f));
+
+                    if (!launched) {
+                        // Pre-launch: draw faint Vx / Vy component dashes
+                        g2.setColor(new Color(0x00, 0xCC, 0xFF, 90));
+                        g2.setStroke(new BasicStroke(1f, BasicStroke.CAP_BUTT, BasicStroke.JOIN_MITER,
+                            1f, new float[]{4f, 4f}, 0f));
+                        g2.drawLine(px, py, vx2, py);   // horizontal component
+                        g2.drawLine(vx2, py, vx2, vy2); // vertical component
+
+                        // Component labels
+                        g2.setFont(new Font("Monospaced", Font.PLAIN, 10));
+                        g2.setColor(new Color(0x00, 0xCC, 0xFF, 160));
+                        g2.drawString(String.format("Vx=%.1f", velX), px + 4, py - 4);
+                        g2.drawString(String.format("Vy=%.1f", velY), vx2 + 4, (py + vy2) / 2);
+                    }
+
+                    // Main resultant vector
+                    g2.setColor(new Color(0xFF, 0x99, 0x00, launched ? 220 : 180));
+                    g2.setStroke(new BasicStroke(launched ? 2f : 1.5f));
                     g2.drawLine(px, py, vx2, vy2);
                     drawArrow(g2, px, py, vx2, vy2);
+
+                    // Speed label on arrow tip
+                    double spd = Math.hypot(velX, velY);
+                    g2.setFont(new Font("Monospaced", Font.PLAIN, 10));
+                    g2.setColor(ACCENT_YELLOW);
+                    g2.drawString(String.format("%.1f m/s", spd), vx2 + 4, vy2 - 4);
                 }
             }
 
@@ -513,6 +584,8 @@ public class PhysicsDemo extends JFrame {
                     String.format("Range    : %7.2f m",     range),
                     String.format("Gravity  : %7.2f m/s²",  gravity),
                     String.format("Angle    : %7.1f deg",   (double)(sliderAngle.getValue())),
+                    String.format("Drag k   : %s",          dragCoef > 0
+                        ? String.format("%7.4f", dragCoef) : "    OFF"),
                     "",
                     landed   ? "STATUS: LANDED" : (launched ? "STATUS: IN FLIGHT" : "STATUS: READY"),
                 };
