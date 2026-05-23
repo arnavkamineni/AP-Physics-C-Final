@@ -717,6 +717,11 @@ public class PhysicsDemo extends JFrame {
         JButton btnReset;
         JComboBox<String> comboPreset;
 
+        // --- Custom-preset controls ---
+        JPanel    customPanel;
+        JSlider[] customMassSliders = new JSlider[3];
+        JLabel[]  customMassLabels  = new JLabel[3];
+
         ThreeBodyPanel() {
             setLayout(new BorderLayout(4, 4));
             setBackground(BG_COLOR);
@@ -752,7 +757,7 @@ public class PhysicsDemo extends JFrame {
             panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
             panel.setBackground(CONTROL_BG);
             panel.setBorder(new EmptyBorder(12, 12, 12, 12));
-            panel.setPreferredSize(new Dimension(230, 0));
+            panel.setPreferredSize(new Dimension(260, 0));
 
             JLabel title = new JLabel("Three-Body Gravity");
             title.setForeground(ACCENT_CYAN);
@@ -766,20 +771,77 @@ public class PhysicsDemo extends JFrame {
             presetPanel.setBackground(CONTROL_BG);
             presetPanel.setBorder(makeTitledBorder("Preset"));
             presetPanel.setAlignmentX(Component.LEFT_ALIGNMENT);
-            comboPreset = new JComboBox<>(new String[]{"Sun-Earth-Moon", "Figure-8 Orbit", "Random"});
+            comboPreset = new JComboBox<>(new String[]{
+                "Sun-Earth-Moon", "Figure-8 Orbit", "Random", "Custom"});
             comboPreset.setBackground(new Color(0x22, 0x22, 0x44));
             comboPreset.setForeground(Color.WHITE);
             comboPreset.setFont(LABEL_FONT);
+            presetPanel.add(comboPreset, BorderLayout.CENTER);
+            panel.add(presetPanel);
+            panel.add(Box.createVerticalStrut(6));
+
+            // ----- Custom mass panel (visible only for "Custom" preset) -----
+            customPanel = new JPanel();
+            customPanel.setLayout(new BoxLayout(customPanel, BoxLayout.Y_AXIS));
+            customPanel.setBackground(CONTROL_BG);
+            customPanel.setBorder(makeTitledBorder("Custom Masses"));
+            customPanel.setAlignmentX(Component.LEFT_ALIGNMENT);
+            customPanel.setVisible(false);
+
+            Color[] bodyColors = {new Color(0xFF, 0xD7, 0x00), new Color(0x00, 0xE5, 0xFF), new Color(0xFF, 0x6B, 0x35)};
+            String[] bodyNames = {"Alpha", "Beta", "Gamma"};
+            int[]    defaults  = {10, 10, 10}; // default: 1.0 Msun each (slider * 0.1)
+
+            for (int i = 0; i < 3; i++) {
+                final int idx = i;
+                JPanel row = new JPanel(new BorderLayout(4, 0));
+                row.setBackground(CONTROL_BG);
+                row.setAlignmentX(Component.LEFT_ALIGNMENT);
+                row.setMaximumSize(new Dimension(Integer.MAX_VALUE, 38));
+
+                JLabel nameLbl = new JLabel(bodyNames[i]);
+                nameLbl.setForeground(bodyColors[i]);
+                nameLbl.setFont(HUD_BOLD);
+                nameLbl.setPreferredSize(new Dimension(42, 18));
+
+                customMassSliders[i] = makeSlider(1, 100, defaults[i]);
+                customMassLabels[i]  = new JLabel("1.0 M☉");
+                customMassLabels[i].setForeground(ACCENT_YELLOW);
+                customMassLabels[i].setFont(HUD_FONT);
+                customMassLabels[i].setPreferredSize(new Dimension(54, 18));
+                customMassLabels[i].setHorizontalAlignment(SwingConstants.RIGHT);
+
+                customMassSliders[i].addChangeListener(e -> {
+                    double msun = customMassSliders[idx].getValue() * 0.1;
+                    customMassLabels[idx].setText(String.format("%.1f M☉", msun));
+                    if ("Custom".equals(currentPreset) && !running) {
+                        loadCustom();
+                        updateInfoLabels();
+                        canvas.repaint();
+                    }
+                });
+
+                row.add(nameLbl,              BorderLayout.WEST);
+                row.add(customMassSliders[i], BorderLayout.CENTER);
+                row.add(customMassLabels[i],  BorderLayout.EAST);
+                customPanel.add(row);
+                if (i < 2) customPanel.add(Box.createVerticalStrut(2));
+            }
+
+            panel.add(customPanel);
+            panel.add(Box.createVerticalStrut(6));
+
+            // Wire preset combo AFTER customPanel is built
             comboPreset.addActionListener(e -> {
                 currentPreset = (String) comboPreset.getSelectedItem();
+                customPanel.setVisible("Custom".equals(currentPreset));
                 animTimer.stop();
                 running = false;
                 btnStartPause.setText("  Start  ");
                 loadPreset(currentPreset);
             });
-            presetPanel.add(comboPreset, BorderLayout.CENTER);
-            panel.add(presetPanel);
-            panel.add(Box.createVerticalStrut(10));
+
+            panel.add(Box.createVerticalStrut(4));
 
             // Elapsed time
             lblTime = new JLabel("Time: 0.00 days");
@@ -791,13 +853,13 @@ public class PhysicsDemo extends JFrame {
 
             // Per-body info labels (3 bodies, 3 labels each: name/mass, vel, blank)
             infoLabels = new JLabel[9];
-            Color[] bodyColors = {new Color(0xFF, 0xD7, 0x00), new Color(0x00, 0xE5, 0xFF), new Color(0xFF, 0x6B, 0x35)};
+            Color[] infoColors = {new Color(0xFF, 0xD7, 0x00), new Color(0x00, 0xE5, 0xFF), new Color(0xFF, 0x6B, 0x35)};
             for (int i = 0; i < 3; i++) {
                 JPanel bp = new JPanel();
                 bp.setLayout(new BoxLayout(bp, BoxLayout.Y_AXIS));
                 bp.setBackground(new Color(0x10, 0x10, 0x28));
                 bp.setBorder(BorderFactory.createCompoundBorder(
-                    BorderFactory.createLineBorder(bodyColors[i].darker(), 1),
+                    BorderFactory.createLineBorder(infoColors[i].darker(), 1),
                     new EmptyBorder(4, 6, 4, 6)));
                 bp.setAlignmentX(Component.LEFT_ALIGNMENT);
                 bp.setMaximumSize(new Dimension(Integer.MAX_VALUE, 64));
@@ -806,7 +868,7 @@ public class PhysicsDemo extends JFrame {
                 infoLabels[i * 3 + 1] = new JLabel("Mass: ---");
                 infoLabels[i * 3 + 2] = new JLabel("Vel:  ---");
                 for (int j = 0; j < 3; j++) {
-                    infoLabels[i * 3 + j].setForeground(j == 0 ? bodyColors[i] : Color.LIGHT_GRAY);
+                    infoLabels[i * 3 + j].setForeground(j == 0 ? infoColors[i] : Color.LIGHT_GRAY);
                     infoLabels[i * 3 + j].setFont(j == 0 ? HUD_BOLD : HUD_FONT);
                     infoLabels[i * 3 + j].setAlignmentX(Component.LEFT_ALIGNMENT);
                     bp.add(infoLabels[i * 3 + j]);
@@ -866,18 +928,65 @@ public class PhysicsDemo extends JFrame {
         void loadPreset(String name) {
             simTime = 0;
             switch (name) {
-                case "Figure-8 Orbit":
-                    loadFigure8();
-                    break;
-                case "Random":
-                    loadRandom();
-                    break;
-                default:
-                    loadSunEarthMoon();
-                    break;
+                case "Figure-8 Orbit": loadFigure8();      break;
+                case "Random":         loadRandom();        break;
+                case "Custom":         loadCustom();        break;
+                default:               loadSunEarthMoon();  break;
             }
             updateInfoLabels();
             if (canvas != null) canvas.repaint();
+        }
+
+        void loadCustom() {
+            double Msun = 1.989e30;
+            double AU   = 1.5e11;
+            double R    = 1.2 * AU; // equilateral triangle radius
+
+            // Read masses from sliders (each tick = 0.1 Msun)
+            double[] ms = new double[3];
+            for (int i = 0; i < 3; i++) {
+                ms[i] = Msun * (customMassSliders[i] != null
+                    ? customMassSliders[i].getValue() * 0.1 : 1.0);
+            }
+
+            // Equilateral triangle positions (center-of-mass corrected)
+            double[] xs = {R, -R * 0.5, -R * 0.5};
+            double[] ys = {0,  R * Math.sqrt(3) / 2, -R * Math.sqrt(3) / 2};
+            double totalM = ms[0] + ms[1] + ms[2];
+            double cmx = (ms[0]*xs[0] + ms[1]*xs[1] + ms[2]*xs[2]) / totalM;
+            double cmy = (ms[0]*ys[0] + ms[1]*ys[1] + ms[2]*ys[2]) / totalM;
+            for (int i = 0; i < 3; i++) { xs[i] -= cmx; ys[i] -= cmy; }
+
+            // Initial velocities: each body orbits the CM of the other two
+            double[][] vels = new double[3][2];
+            for (int i = 0; i < 3; i++) {
+                int j = (i + 1) % 3, k = (i + 2) % 3;
+                double otherM  = ms[j] + ms[k];
+                double otherCMx = (ms[j]*xs[j] + ms[k]*xs[k]) / otherM;
+                double otherCMy = (ms[j]*ys[j] + ms[k]*ys[k]) / otherM;
+                double dx = xs[i] - otherCMx, dy = ys[i] - otherCMy;
+                double d  = Math.sqrt(dx*dx + dy*dy);
+                double v  = Math.sqrt(G * otherM / d);
+                vels[i][0] = -v * dy / d;  // tangential
+                vels[i][1] =  v * dx / d;
+            }
+
+            // Shift to zero total momentum
+            double vCMx = 0, vCMy = 0;
+            for (int i = 0; i < 3; i++) { vCMx += ms[i]*vels[i][0]; vCMy += ms[i]*vels[i][1]; }
+            vCMx /= totalM; vCMy /= totalM;
+            for (int i = 0; i < 3; i++) { vels[i][0] -= vCMx; vels[i][1] -= vCMy; }
+
+            Color[]  cols  = {new Color(0xFF,0xD7,0x00), new Color(0x00,0xE5,0xFF), new Color(0xFF,0x6B,0x35)};
+            String[] names = {"Alpha", "Beta", "Gamma"};
+            bodies = new Body[3];
+            for (int i = 0; i < 3; i++) {
+                int radius = (int) Math.min(20, Math.max(5, ms[i] / Msun * 10));
+                bodies[i] = new Body(names[i], cols[i], ms[i], radius,
+                    new Vector2D(xs[i], ys[i]),
+                    new Vector2D(vels[i][0], vels[i][1]));
+            }
+            simTime = 0;
         }
 
         /**
